@@ -32,7 +32,7 @@ def latlon_grid(geo, h, w, cell=CELL_DEG):
 
 
 def export(out_dir, geo, probs, observed_rate, leads_min, issued, generated, source, mode,
-           members, motion_ok, stale_after_min=30):
+           members, motion_ok, stale_after_min=30, motion=None):
     """probs (L, T, H, W) uint8; observed_rate (H, W) -> plazo 0 observado."""
     out_dir = Path(out_dir)
     (out_dir / "data").mkdir(parents=True, exist_ok=True)
@@ -52,6 +52,7 @@ def export(out_dir, geo, probs, observed_rate, leads_min, issued, generated, sou
         "issued": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "generated": generated.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": source, "mode": mode, "members": members, "motion_ok": bool(motion_ok),
+        "motion": motion or ("radar" if motion_ok else "ninguno"),
         "thresholds_mmh": list(THRESHOLDS), "leads_min": [0] + list(leads_min),
         "lat_n": float(g["lat_n"]), "lon_w": float(g["lon_w"]), "cell_deg": g["cell"],
         "nlat": g["nlat"], "nlon": g["nlon"], "stale_after_min": stale_after_min,

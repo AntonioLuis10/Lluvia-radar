@@ -38,7 +38,8 @@ def estimate_motion(db_stack):
     try:
         from pysteps import motion
         v = motion.get_method("LK")(db_stack)
-        if v is not None and np.all(np.isfinite(v)):
+        # LK devuelve un campo todo ceros cuando no encuentra rasgos que seguir: eso es un fallo
+        if v is not None and np.all(np.isfinite(v)) and float(np.abs(v).max()) > 1e-6:
             return v.astype(np.float32), True
     except Exception as e:  # pragma: no cover - depende de los datos
         log.warning("Lucas-Kanade falló: %s", e)
@@ -46,7 +47,7 @@ def estimate_motion(db_stack):
 
 
 def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=120,
-                           n_members=20, seed=42, num_workers=2):
+                           n_members=20, seed=42, num_workers=2, ambient_fn=None):
     """rate_stack: (T, H, W) mm/h (nan fuera de cobertura), el último es el más reciente.
 
     Devuelve dict con probs (L, nThr, H, W) uint8 (255 = sin cobertura), leads_min, mode, motion_ok.
@@ -57,7 +58,7 @@ def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=1
     h, w = last.shape
     probs = np.zeros((n_leads, len(THRESHOLDS), h, w), np.uint8)
     leads = [timestep_min * (k + 1) for k in range(n_leads)]
-    out = {"leads_min": leads, "mode": "sin-lluvia", "motion_ok": False}
+    out = {"leads_min": leads, "mode": "sin-lluvia", "motion_ok": False, "motion": "ninguno"}
 
     wet = np.nansum(last >= RAIN_MIN)
     if wet < 25:  # prácticamente nada de lluvia: no hay qué extrapolar
@@ -69,6 +70,16 @@ def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=1
     ar_order = db.shape[0] - 1
     V, ok = estimate_motion(db)
     out["motion_ok"] = ok
+    out["motion"] = "radar" if ok else "ninguno"
+    if not ok and ambient_fn is not None:
+        try:  # poca lluvia para medir el movimiento: se usa el viento a 500-700 hPa
+            u, v_north = ambient_fn()
+            px = 60.0 * timestep_min / (km_per_pixel * 1000.0)
+            V = np.zeros((2,) + db.shape[1:], np.float32)
+            V[0], V[1] = u * px, -v_north * px   # x hacia el este, y (filas) hacia el sur
+            out["motion"] = "viento"
+        except Exception as e:
+            log.warning("Sin viento ambiente de respaldo: %s", e)
 
     counts = np.zeros((n_leads, len(THRESHOLDS), h, w), np.float32)
     state = {"k": 0}

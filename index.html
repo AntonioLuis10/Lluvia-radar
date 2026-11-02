@@ -119,7 +119,7 @@
     <p>Para avisos y decisiones de riesgo, consulta los
     <a href="https://www.aemet.es/es/eltiempo/prediccion/avisos">avisos oficiales de AEMET</a>.
     Datos: <span id="src">radar</span> (EUMETNET OPERA, CC BY 4.0, o RainViewer),
-    mapa © OpenStreetMap y CARTO, búsqueda y modelo numérico: Open-Meteo.</p>
+    mapa © OpenStreetMap, búsqueda y modelo numérico: Open-Meteo.</p>
   </footer>
 </div>
 
@@ -167,8 +167,8 @@ const ageMin = () => (Date.now() - issuedAt().getTime()) / 60000;
 let map;
 function initMap() {
   map = L.map("map", { zoomControl:true, minZoom:4, maxZoom:11 }).setView([39.8, -3.5], 6);
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    attribution:"© OpenStreetMap, © CARTO", subdomains:"abcd", maxZoom:19 }).addTo(map);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution:"© OpenStreetMap contributors", maxZoom:19 }).addTo(map);
 }
 function ramp(v) {  // probabilidad -> [r,g,b,a]
   const t = v / 100;
@@ -313,7 +313,8 @@ function banners() {
   if (age > (m.stale_after_min || 30))
     b.push(`<div class="banner ${age > 90 ? "bad" : "warn"}">Los últimos datos de radar son de hace ${Math.round(age)} min. La predicción puede estar desfasada.</div>`);
   if (m.mode === "extrapolacion") b.push(`<div class="banner warn">Hoy se usa una extrapolación simple, sin escenarios.</div>`);
-  if (!m.motion_ok && m.mode !== "sin-lluvia") b.push(`<div class="banner warn">No se pudo medir el movimiento de la lluvia; la predicción es poco fiable.</div>`);
+  if (m.mode !== "sin-lluvia" && m.motion === "viento") b.push(`<div class="banner warn">Hay poca lluvia para medir su movimiento con el radar; se usa el viento a 500-700 hPa. Fiabilidad reducida.</div>`);
+  else if (m.mode !== "sin-lluvia" && !m.motion_ok) b.push(`<div class="banner warn">No se pudo medir el movimiento de la lluvia; la predicción es poco fiable.</div>`);
   $("#banners").innerHTML = b.join("");
   $("#status").textContent = `${m.source} · radar de las ${fmtTime(issuedAt())} · ${m.mode}`;
   $("#src").textContent = m.source;
