@@ -1,0 +1,55 @@
+name: nowcast
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nowcast
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Recuperar datos y estado previos (rama gh-pages)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git clone --depth=1 --branch gh-pages "$URL" site 2>/dev/null || {
+            mkdir site
+            git -C site init -q -b gh-pages
+            git -C site remote add origin "$URL"
+          }
+
+      - name: Calcular predicción
+        run: python run.py --out site
+
+      - name: Publicar
+        if: success()
+        run: |
+          cp index.html site/index.html
+          cd site
+          touch .nojekyll
+          git config user.name "nowcast-bot"
+          git config user.email "nowcast-bot@users.noreply.github.com"
+          git symbolic-ref HEAD refs/heads/publish
+          git add -A
+          git commit -q -m "nowcast $(date -u +%FT%TZ)"
+          git push -f origin publish:gh-pages
