@@ -1,7 +1,0 @@
-numpy
-scipy
-pysteps
-h5py
-pyproj
-requests
-Pillow
