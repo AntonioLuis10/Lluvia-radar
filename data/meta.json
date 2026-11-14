@@ -1,0 +1,36 @@
+{
+ "issued": "2026-11-14T10:50:00Z",
+ "generated": "2026-11-14T10:54:11Z",
+ "source": "RainViewer",
+ "mode": "STEPS-20",
+ "members": 20,
+ "motion_ok": false,
+ "motion": "ninguno",
+ "thresholds_mmh": [
+  0.5,
+  2.5,
+  10.0
+ ],
+ "leads_min": [
+  0,
+  10,
+  20,
+  30,
+  40,
+  50,
+  60,
+  70,
+  80,
+  90,
+  100,
+  110,
+  120
+ ],
+ "lat_n": 44.52,
+ "lon_w": -8.84,
+ "cell_deg": 0.04,
+ "nlat": 244,
+ "nlon": 317,
+ "stale_after_min": 30,
+ "km_per_pixel": 2.44598490512564
+}

@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lluvia en 2 horas</title>
+<meta name="description" content="Probabilidad de lluvia en las próximas 2 horas a partir de radar abierto, con verificación continua.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root {
+    --bg:#f6f7f9; --card:#fff; --ink:#15202b; --muted:#5b6876; --line:#dfe3e8;
+    --accent:#2563eb; --warn-bg:#fff4d6; --warn-ink:#6b4a00; --bad-bg:#fde8e8; --bad-ink:#8a1c1c;
+    --c1:#2563eb; --c2:#d97706; --c3:#c026d3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f141a; --card:#171e26; --ink:#e7ecf1; --muted:#98a5b3; --line:#27313c;
+      --accent:#6ea0ff; --warn-bg:#3a2e0b; --warn-ink:#f3d98b; --bad-bg:#3b1717; --bad-ink:#f1b0b0;
+      --c1:#6ea0ff; --c2:#f0a63a; --c3:#e179f0;
+    }
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:0 0 2px; }
+  .sub { color:var(--muted); margin:0 0 14px; }
+  .status { display:inline-block; padding:3px 10px; border-radius:999px; font-size:13px;
+    background:var(--card); border:1px solid var(--line); color:var(--muted); }
+  .banner { padding:10px 12px; border-radius:10px; margin:10px 0; font-size:14px; }
+  .banner.warn { background:var(--warn-bg); color:var(--warn-ink); }
+  .banner.bad { background:var(--bad-bg); color:var(--bad-ink); }
+  .searchrow { position:relative; display:flex; gap:8px; margin:12px 0; }
+  .searchrow input { flex:1; padding:11px 12px; font-size:16px; border:1px solid var(--line);
+    border-radius:10px; background:var(--card); color:var(--ink); min-width:0; }
+  button { font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:10px;
+    background:var(--card); color:var(--ink); cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  #results { position:absolute; left:0; right:0; top:100%; z-index:1000; background:var(--card);
+    border:1px solid var(--line); border-radius:10px; margin-top:4px; overflow:hidden; display:none; }
+  #results button { display:block; width:100%; text-align:left; border:0; border-radius:0;
+    border-bottom:1px solid var(--line); }
+  #results button:last-child { border-bottom:0; }
+  .grid { display:grid; grid-template-columns:1.25fr 1fr; gap:14px; }
+  @media (max-width:860px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  #map { height:440px; border-radius:10px; }
+  @media (max-width:860px) { #map { height:340px; } }
+  .timebar { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .timebar input[type=range] { flex:1; }
+  #tlabel { min-width:116px; text-align:right; font-variant-numeric:tabular-nums; }
+  select { font:inherit; padding:6px; border-radius:8px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); }
+  h2 { font-size:16px; margin:0 0 8px; }
+  .place { font-weight:600; font-size:17px; }
+  .row { display:flex; gap:8px; align-items:flex-start; margin:6px 0; }
+  .dot { width:10px; height:10px; border-radius:50%; margin-top:6px; flex:none; }
+  .muted { color:var(--muted); font-size:13px; }
+  svg text { fill:var(--muted); font-size:11px; }
+  svg .grid { stroke:var(--line); }
+  table { border-collapse:collapse; width:100%; font-size:13px; font-variant-numeric:tabular-nums; }
+  th, td { padding:4px 6px; text-align:right; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; }
+  .nwp { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; }
+  .nwp span { border:1px solid var(--line); border-radius:6px; padding:2px 6px; font-size:12px;
+    font-variant-numeric:tabular-nums; }
+  .pix { image-rendering:pixelated; image-rendering:crisp-edges; }
+  footer { margin:16px 0 6px; font-size:13px; color:var(--muted); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Lluvia en las próximas 2 horas</h1>
+  <p class="sub">Probabilidades a partir de radar abierto. <span class="status" id="status">cargando…</span></p>
+  <div id="banners"></div>
+
+  <div class="searchrow">
+    <input id="q" type="search" placeholder="Busca tu ciudad o pueblo…" autocomplete="off" aria-label="Buscar ciudad o pueblo">
+    <button id="gps" title="Usar mi ubicación" aria-label="Usar mi ubicación">📍</button>
+    <div id="results" role="listbox"></div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div id="map" role="img" aria-label="Mapa de probabilidad de lluvia"></div>
+      <div class="timebar">
+        <button id="play" aria-label="Reproducir">▶</button>
+        <input id="slider" type="range" min="0" max="0" value="0" aria-label="Plazo de la predicción">
+        <span id="tlabel">—</span>
+      </div>
+      <div class="timebar">
+        <label for="thr" class="muted">Intensidad</label>
+        <select id="thr"></select>
+      </div>
+    </section>
+
+    <section class="card" aria-live="polite">
+      <h2>Tu ubicación</h2>
+      <div id="place" class="place">Elige un lugar</div>
+      <div id="summary" class="muted">Busca tu pueblo o pulsa 📍 para ver la probabilidad de lluvia por tramos de tiempo.</div>
+      <div id="chart"></div>
+      <div id="nwp"></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:14px">
+    <h2>¿Acierta? Verificación continua</h2>
+    <div id="stats" class="muted">Cargando…</div>
+  </section>
+
+  <footer>
+    <p><strong>Cómo leerlo.</strong> Cada porcentaje es la fracción de <span id="nmem">varios</span> escenarios simulados (método STEPS)
+    en que llueve por encima de la intensidad indicada. La predicción mueve y evoluciona la lluvia que ya hay;
+    no anticipa tormentas que aún no existen, y a partir de 1 hora pierde mucha fiabilidad.
+    La verificación compara con el propio radar, no con pluviómetros.</p>
+    <p>Para avisos y decisiones de riesgo, consulta los
+    <a href="https://www.aemet.es/es/eltiempo/prediccion/avisos">avisos oficiales de AEMET</a>.
+    Datos: <span id="src">radar</span> (EUMETNET OPERA, CC BY 4.0, o RainViewer),
+    mapa © OpenStreetMap, búsqueda y modelo numérico: Open-Meteo.</p>
+  </footer>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const THR_NAMES = ["Lluvia (≥ 0,5 mm/h)", "Moderada (≥ 2,5 mm/h)", "Fuerte (≥ 10 mm/h)"];
+const COLORS = ["var(--c1)", "var(--c2)", "var(--c3)"];
+const S = { meta:null, grid:null, ti:0, li:0, loc:null, overlay:null, marker:null, timer:null };
+
+const fmtTime = d => d.toLocaleTimeString("es-ES", { hour:"2-digit", minute:"2-digit" });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const safe = (fn) => { try { return fn(); } catch (e) { return null; } };
+
+// ---------------------------------------------------------------- datos
+async function inflate(buf) {
+  const b = new Uint8Array(buf);
+  if (b[0] === 0x1f && b[1] === 0x8b) {
+    const stream = new Blob([b]).stream().pipeThrough(new DecompressionStream("gzip"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  return b;
+}
+async function loadData() {
+  const v = Date.now();
+  const meta = await (await fetch(`data/meta.json?v=${v}`)).json();
+  const buf = await (await fetch(`data/probs.bin.gz?v=${v}`)).arrayBuffer();
+  const grid = await inflate(buf);
+  const need = meta.thresholds_mmh.length * meta.leads_min.length * meta.nlat * meta.nlon;
+  if (grid.length !== need) throw new Error("Datos incompletos");
+  S.meta = meta; S.grid = grid;
+}
+const cellIndex = (ti, li, i, j) => ((ti * S.meta.leads_min.length + li) * S.meta.nlat + i) * S.meta.nlon + j;
+function cellAt(lat, lon) {
+  const m = S.meta;
+  const i = Math.floor((m.lat_n - lat) / m.cell_deg), j = Math.floor((lon - m.lon_w) / m.cell_deg);
+  return (i >= 0 && i < m.nlat && j >= 0 && j < m.nlon) ? [i, j] : null;
+}
+const issuedAt = () => new Date(S.meta.issued);
+const ageMin = () => (Date.now() - issuedAt().getTime()) / 60000;
+
+// ---------------------------------------------------------------- mapa
+let map;
+function initMap() {
+  map = L.map("map", { zoomControl:true, minZoom:4, maxZoom:11 }).setView([39.8, -3.5], 6);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution:"© OpenStreetMap contributors", maxZoom:19 }).addTo(map);
+}
+function ramp(v) {  // probabilidad -> [r,g,b,a]
+  const t = v / 100;
+  const r = Math.round(158 + (8 - 158) * t), g = Math.round(202 + (48 - 202) * t), b = Math.round(225 + (107 - 225) * t);
+  return [r, g, b, Math.round(255 * (0.25 + 0.65 * t))];
+}
+function drawOverlay() {
+  const m = S.meta;
+  const cv = document.createElement("canvas"); cv.width = m.nlon; cv.height = m.nlat;
+  const ctx = cv.getContext("2d"), img = ctx.createImageData(m.nlon, m.nlat);
+  const base = cellIndex(S.ti, S.li, 0, 0);
+  for (let k = 0; k < m.nlat * m.nlon; k++) {
+    const v = S.grid[base + k];
+    if (v === 255 || v < 5) continue;
+    const [r, g, b, a] = ramp(v);
+    img.data.set([r, g, b, a], k * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+  const bounds = [[m.lat_n - m.nlat * m.cell_deg, m.lon_w], [m.lat_n, m.lon_w + m.nlon * m.cell_deg]];
+  if (S.overlay) map.removeLayer(S.overlay);
+  S.overlay = L.imageOverlay(cv.toDataURL(), bounds, { opacity:0.85, className:"pix", interactive:false }).addTo(map);
+  const lead = m.leads_min[S.li];
+  $("#tlabel").textContent = lead === 0 ? `Radar ${fmtTime(issuedAt())}`
+    : `+${lead} min · ${fmtTime(new Date(issuedAt().getTime() + lead * 60000))}`;
+}
+
+// --------------------------------------------------------- resumen y gráfico
+function series(ti) {
+  const c = cellAt(S.loc.lat, S.loc.lon); if (!c) return null;
+  const out = [];
+  for (let li = 0; li < S.meta.leads_min.length; li++) out.push(S.grid[cellIndex(ti, li, c[0], c[1])]);
+  return out.some(v => v === 255) ? null : out;
+}
+function describe(ti, p) {
+  const m = S.meta, t0 = issuedAt().getTime(), L = m.leads_min;
+  const clock = i => fmtTime(new Date(t0 + L[i] * 60000));
+  if (p[0] === 100) return "ya llueve según el último radar";
+  const first = th => p.findIndex((v, i) => i > 0 && v >= th);
+  const likely = first(50), possible = first(20);
+  if (likely > 0) {
+    const extra = possible > 0 && possible < likely ? `; posible desde ${clock(possible)}` : "";
+    return `probable (≥ 50 %) hacia las ${clock(likely)} (+${L[likely]} min)${extra}`;
+  }
+  if (possible > 0) return `posible (≥ 20 %) desde las ${clock(possible)} (+${L[possible]} min), sin llegar al 50 %`;
+  return `sin probabilidad relevante (máx. ${Math.max(...p.slice(1))} %) en las próximas 2 h`;
+}
+function renderChart(all) {
+  const W = 640, H = 210, ml = 34, mr = 8, mt = 8, mb = 26, L = S.meta.leads_min, lmax = L[L.length - 1];
+  const x = l => ml + (W - ml - mr) * l / lmax, y = v => mt + (H - mt - mb) * (1 - v / 100);
+  let g = "";
+  for (const v of [0, 25, 50, 75, 100]) g += `<line class="grid" x1="${ml}" x2="${W - mr}" y1="${y(v)}" y2="${y(v)}"/><text x="${ml - 5}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
+  for (let l = 0; l <= lmax; l += 30) g += `<text x="${x(l)}" y="${H - 8}" text-anchor="${l === lmax ? "end" : l === 0 ? "start" : "middle"}">${fmtTime(new Date(issuedAt().getTime() + l * 60000))}</text>`;
+  const nowL = ageMin();
+  if (nowL > 0 && nowL < lmax) g += `<line x1="${x(nowL)}" x2="${x(nowL)}" y1="${mt}" y2="${H - mb}" stroke="currentColor" stroke-dasharray="3 3" opacity=".5"/><text x="${x(nowL) + 3}" y="${mt + 10}">ahora</text>`;
+  all.forEach((p, ti) => { if (!p) return;
+    g += `<polyline fill="none" stroke="${COLORS[ti]}" stroke-width="2.2" points="${p.map((v, i) => `${x(L[i])},${y(v)}`).join(" ")}"/>`; });
+  $("#chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Probabilidad de lluvia por plazo">${g}</svg>`;
+}
+function renderLocation() {
+  if (!S.loc || !S.meta) return;
+  $("#place").textContent = S.loc.name;
+  const all = S.meta.thresholds_mmh.map((_, ti) => series(ti));
+  if (!all[0]) {
+    $("#summary").textContent = "Este punto queda fuera de la zona cubierta por el radar usado (o sin datos en este momento).";
+    $("#chart").innerHTML = ""; return;
+  }
+  $("#summary").innerHTML = all.map((p, ti) =>
+    `<div class="row"><span class="dot" style="background:${COLORS[ti]}"></span><div><strong>${THR_NAMES[ti]}:</strong> ${esc(describe(ti, p))}</div></div>`).join("")
+    + `<div class="muted">Basado en el radar de las ${fmtTime(issuedAt())}.</div>`;
+  renderChart(all);
+}
+
+// ----------------------------------------------------------- modelo numérico
+async function loadNwp() {
+  $("#nwp").innerHTML = "";
+  if (!S.loc) return;
+  const { lat, lon } = S.loc;
+  try {
+    const u = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&minutely_15=precipitation&forecast_minutely_15=8&timezone=Europe%2FMadrid`;
+    const j = await (await fetch(u)).json();
+    const t = j.minutely_15.time, p = j.minutely_15.precipitation;
+    $("#nwp").innerHTML = `<h2 style="margin-top:14px">Modelo numérico (comparación)</h2>
+      <div class="muted">Precipitación en mm por cada 15 min, Open-Meteo. En España puede ser una interpolación de datos horarios: úsalo sólo como contraste.</div>
+      <div class="nwp">${t.map((s, i) => `<span>${s.slice(11, 16)} · ${p[i] == null ? "—" : p[i].toFixed(1)}</span>`).join("")}</div>`;
+  } catch (e) { /* sin red: se omite */ }
+}
+
+// ------------------------------------------------------------ verificación
+async function loadStats() {
+  const el = $("#stats");
+  try {
+    const s = await (await fetch(`data/stats.json?v=${Date.now()}`)).json();
+    const rows = s.leads_min.map(l => {
+      const c = s.table[String(l)]["0.5"];
+      const ev = c.hits + c.misses;
+      if (!c.n) return `<tr><td>+${l} min</td><td colspan="5">sin datos aún</td></tr>`;
+      const pod = ev ? c.hits / ev : null, far = (c.hits + c.false_alarms) ? c.false_alarms / (c.hits + c.false_alarms) : null;
+      const csi = (ev + c.false_alarms) ? c.hits / (ev + c.false_alarms) : null;
+      const bss = c.brier_persist_sum ? 1 - c.brier_sum / c.brier_persist_sum : null;
+      const f = v => v == null ? "—" : (v * 100).toFixed(0) + " %";
+      return `<tr><td>+${l} min</td><td>${ev.toLocaleString("es-ES")}</td><td>${f(pod)}</td><td>${f(far)}</td><td>${f(csi)}</td><td>${bss == null ? "—" : (bss * 100).toFixed(0) + " %"}</td></tr>`;
+    }).join("");
+    el.innerHTML = `<div style="overflow-x:auto"><table><thead><tr><th>Plazo</th><th>Píxeles con lluvia</th><th title="Acierto: lluvia observada que se había avisado">Detección</th>
+      <th title="De los avisos (≥50 %), cuántos fueron falsos">Falsas alarmas</th><th title="Índice crítico de éxito">CSI</th>
+      <th title="Mejora sobre «seguirá igual que ahora»; 0 % = igual de bueno, negativo = peor">Mejora vs. persistencia</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted">Lluvia ≥ 0,5 mm/h, comparando cada predicción con el radar que llegó después. Acumulado desde ${esc((s.since || "").slice(0, 10))}.
+      Con pocas horas de datos las cifras son muy ruidosas.</p>`;
+  } catch (e) { el.textContent = "Todavía no hay verificación acumulada."; }
+}
+
+// ------------------------------------------------------------------ búsqueda
+let debounce;
+async function search(q) {
+  const box = $("#results");
+  if (q.trim().length < 2) { box.style.display = "none"; return; }
+  try {
+    const r = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q.trim())}&count=6&language=es&format=json`)).json();
+    const list = r.results || [];
+    box.innerHTML = list.length ? list.map((p, i) =>
+      `<button data-i="${i}" role="option">${esc([p.name, p.admin2, p.admin1, p.country].filter((v, k, a) => v && a.indexOf(v) === k).join(", "))}</button>`).join("")
+      : `<button disabled>Sin resultados</button>`;
+    box.style.display = "block";
+    box.onclick = e => { const b = e.target.closest("button[data-i]"); if (!b) return; const p = list[+b.dataset.i];
+      box.style.display = "none"; $("#q").value = "";
+      setLocation(p.latitude, p.longitude, [p.name, p.admin1].filter(Boolean).join(", ")); };
+    box._list = list;
+  } catch (e) { box.innerHTML = `<button disabled>Error de búsqueda</button>`; box.style.display = "block"; }
+}
+function setLocation(lat, lon, name) {
+  S.loc = { lat, lon, name };
+  if (S.marker) map.removeLayer(S.marker);
+  S.marker = L.circleMarker([lat, lon], { radius:7, color:"#fff", weight:2, fillColor:"#e11d48", fillOpacity:1 }).addTo(map);
+  map.setView([lat, lon], Math.max(map.getZoom(), 8));
+  safe(() => history.replaceState(null, "", `#lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&n=${encodeURIComponent(name)}`));
+  safe(() => localStorage.setItem("loc", JSON.stringify(S.loc)));
+  renderLocation(); loadNwp();
+}
+
+// ---------------------------------------------------------------- arranque
+function banners() {
+  const m = S.meta, b = [], age = ageMin();
+  if (age > (m.stale_after_min || 30))
+    b.push(`<div class="banner ${age > 90 ? "bad" : "warn"}">Los últimos datos de radar son de hace ${Math.round(age)} min. La predicción puede estar desfasada.</div>`);
+  if (m.mode === "extrapolacion") b.push(`<div class="banner warn">Hoy se usa una extrapolación simple, sin escenarios.</div>`);
+  if (m.mode !== "sin-lluvia" && m.motion === "viento") b.push(`<div class="banner warn">Hay poca lluvia para medir su movimiento con el radar; se usa el viento a 500-700 hPa. Fiabilidad reducida.</div>`);
+  else if (m.mode !== "sin-lluvia" && !m.motion_ok) b.push(`<div class="banner warn">No se pudo medir el movimiento de la lluvia; la predicción es poco fiable.</div>`);
+  $("#banners").innerHTML = b.join("");
+  $("#status").textContent = `${m.source} · radar de las ${fmtTime(issuedAt())} · ${m.mode}`;
+  $("#src").textContent = m.source;
+  if (m.members) $("#nmem").textContent = m.members;
+}
+async function main() {
+  initMap();
+  $("#thr").innerHTML = THR_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+  $("#thr").onchange = e => { S.ti = +e.target.value; drawOverlay(); };
+  try { await loadData(); } catch (e) {
+    $("#status").textContent = "sin datos";
+    $("#banners").innerHTML = `<div class="banner bad">Aún no hay predicción publicada o no se pudo cargar (${esc(e.message)}).</div>`;
+    loadStats(); return;
+  }
+  const sl = $("#slider"); sl.max = S.meta.leads_min.length - 1; sl.value = 0;
+  sl.oninput = () => { S.li = +sl.value; drawOverlay(); };
+  $("#play").onclick = () => {
+    if (S.timer) { clearInterval(S.timer); S.timer = null; $("#play").textContent = "▶"; return; }
+    $("#play").textContent = "⏸";
+    S.timer = setInterval(() => { S.li = (S.li + 1) % S.meta.leads_min.length; sl.value = S.li; drawOverlay(); }, 450);
+  };
+  banners(); drawOverlay(); loadStats();
+  const h = new URLSearchParams(location.hash.slice(1));
+  const saved = safe(() => JSON.parse(localStorage.getItem("loc") || "null"));
+  if (h.get("lat") && h.get("lon")) setLocation(+h.get("lat"), +h.get("lon"), h.get("n") || "Ubicación");
+  else if (saved && isFinite(saved.lat)) setLocation(saved.lat, saved.lon, saved.name);
+}
+$("#q").addEventListener("input", e => { clearTimeout(debounce); debounce = setTimeout(() => search(e.target.value), 250); });
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter") { const b = $("#results button[data-i]"); if (b) b.click(); } });
+document.addEventListener("click", e => { if (!e.target.closest(".searchrow")) $("#results").style.display = "none"; });
+$("#gps").onclick = () => navigator.geolocation && navigator.geolocation.getCurrentPosition(
+  p => setLocation(p.coords.latitude, p.coords.longitude, "Mi ubicación"), () => alert("No se pudo obtener tu ubicación."));
+main();
+</script>
+</body>
+</html>
