@@ -271,11 +271,17 @@ async function loadStats() {
       const f = v => v == null ? "—" : (v * 100).toFixed(0) + " %";
       return `<tr><td>+${l} min</td><td>${ev.toLocaleString("es-ES")}</td><td>${f(pod)}</td><td>${f(far)}</td><td>${f(csi)}</td><td>${bss == null ? "—" : (bss * 100).toFixed(0) + " %"}</td></tr>`;
     }).join("");
+    const bs = (tab, l) => { const c = tab && tab[String(l)] && tab[String(l)]["0.5"];
+      return c && c.n && c.brier_persist_sum ? (1 - c.brier_sum / c.brier_persist_sum) * 100 : null; };
+    const ab = s.table_blend ? `<p class="muted"><b>Prueba A/B (mejora vs. persistencia):</b> ` + s.leads_min.map(l => {
+      const a = bs(s.table, l), b = bs(s.table_blend, l);
+      return `+${l} min: radar ${a == null ? "—" : a.toFixed(0) + " %"} · radar+viento director ${b == null ? "—" : b.toFixed(0) + " %"}`;
+    }).join(" | ") + `. El mapa usa «radar»; la mezcla sólo se mide.</p>` : "";
     el.innerHTML = `<div style="overflow-x:auto"><table><thead><tr><th>Plazo</th><th>Píxeles con lluvia</th><th title="Acierto: lluvia observada que se había avisado">Detección</th>
       <th title="De los avisos (≥50 %), cuántos fueron falsos">Falsas alarmas</th><th title="Índice crítico de éxito">CSI</th>
       <th title="Mejora sobre «seguirá igual que ahora»; 0 % = igual de bueno, negativo = peor">Mejora vs. persistencia</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="muted">Lluvia ≥ 0,5 mm/h, comparando cada predicción con el radar que llegó después. Acumulado desde ${esc((s.since || "").slice(0, 10))}.
-      Con pocas horas de datos las cifras son muy ruidosas.</p>`;
+      Con pocas horas de datos las cifras son muy ruidosas.</p>${ab}`;
   } catch (e) { el.textContent = "Todavía no hay verificación acumulada."; }
 }
 

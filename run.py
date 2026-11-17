@@ -9,8 +9,10 @@ Uso:  python run.py --out site [--source auto|rainviewer|opera|hybrid]
 """
 import argparse
 import logging
+import json
 import math
 import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -72,7 +74,7 @@ def fuse(opera: Frame, rv: Frame) -> Frame:
 
 
 def process(frames, out_dir, center, size=576, members=20, horizon=120, now=None, workers=2,
-            fill=None):
+            fill=None, tau0=60.0):
     now = now or datetime.now(timezone.utc)
     frames = prepare(frames, center, size)
     if fill:
@@ -93,15 +95,50 @@ def process(frames, out_dir, center, size=576, members=20, horizon=120, now=None
     if "merc" in geo.proj4:  # en Mercator el píxel mide dx * cos(lat) sobre el terreno
         kmpp *= math.cos(math.radians(center[0]))
     res = engine.forecast_probabilities(rates, step, kmpp, horizon, members, num_workers=workers,
-                                        ambient_fn=lambda: ambient_wind(center[0], center[1]))
+                                        ambient_fn=lambda: ambient_wind(center[0], center[1]),
+                                        steering_fn=lambda: steering_wind(center[0], center[1]), tau0=tau0)
     t_obs = frames[-1].time
     meta = export.export(out_dir, geo, res["probs"], rates[-1], res["leads_min"], t_obs, now,
                          frames[-1].source, res["mode"], members, res["motion_ok"],
                          motion=res.get("motion"))
     meta["coverage"] = cover
+    meta["steering"] = res.get("steering")
+    meta["blend"] = res.get("probs_blend") is not None
+    if meta["blend"]:
+        meta["tau0"] = tau0
+        # el mapa/gráfico siguen mostrando el radar puro; la mezcla sólo se verifica (A/B)
+        pass
     verify.score(f"{out_dir}/state", f"{out_dir}/data/stats.json", t_obs, rates[-1], step)
-    verify.save_forecast(f"{out_dir}/state", t_obs, res["probs"], res["leads_min"], rates[-1])
+    verify.save_forecast(f"{out_dir}/state", t_obs, res["probs"], res["leads_min"], rates[-1],
+                         probs_blend=res.get("probs_blend"))
+    (Path(out_dir) / "data" / "meta.json").write_text(json.dumps(meta))
     return meta
+
+
+def steering_wind(lat, lon):
+    """Viento director: media de 850/700/500 hPa. Cortante 850-500 y vector de Bunkers
+    (D = 7,5 m/s a la derecha del cortante) si el cortante supera 20 m/s."""
+    r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=20, params={
+        "latitude": lat, "longitude": lon, "wind_speed_unit": "ms", "timezone": "UTC",
+        "forecast_days": 2,
+        "hourly": ",".join(f"wind_speed_{l}hPa,wind_direction_{l}hPa" for l in (850, 700, 500))})
+    r.raise_for_status()
+    h = r.json()["hourly"]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    idx = max(i for i, t in enumerate(h["time"]) if datetime.strptime(t, "%Y-%m-%dT%H:%M") <= now)
+    uv = {}
+    for l in (850, 700, 500):
+        a = math.radians(float(h[f"wind_direction_{l}hPa"][idx]))
+        sp = float(h[f"wind_speed_{l}hPa"][idx])
+        uv[l] = (-sp * math.sin(a), -sp * math.cos(a))
+    um = float(np.mean([uv[l][0] for l in uv]))
+    vm = float(np.mean([uv[l][1] for l in uv]))
+    us, vs = uv[500][0] - uv[850][0], uv[500][1] - uv[850][1]
+    shear = math.hypot(us, vs)
+    out = {"mean": (um, vm), "shear": round(shear, 1), "bunkers": None}
+    if shear > 20.0:
+        out["bunkers"] = (um + 7.5 * vs / shear, vm - 7.5 * us / shear)
+    return out
 
 
 def ambient_wind(lat, lon):
@@ -193,6 +230,7 @@ def main(argv=None):
     ap.add_argument("--lon", type=float, default=DEFAULT_CENTER[1])
     ap.add_argument("--size", type=int, default=576)
     ap.add_argument("--members", type=int, default=20)
+    ap.add_argument("--tau0", type=float, default=60.0, help="minutos: peso radar w=exp(-t/tau0)")
     ap.add_argument("--max-age", type=int, default=45, help="minutos máx. del último frame")
     ap.add_argument("--min-coverage", type=float, default=0.15)
     a = ap.parse_args(argv)
@@ -205,7 +243,7 @@ def main(argv=None):
     if why:
         log.warning("Avisos: %s", "; ".join(why))
     log.info("Fuente: %s%s", frames[-1].source, " + RainViewer en huecos" if fill else "")
-    meta = process(frames, a.out, center, a.size, a.members, fill=fill)
+    meta = process(frames, a.out, center, a.size, a.members, fill=fill, tau0=a.tau0)
     log.info("Listo: %s", meta)
     return 0
 

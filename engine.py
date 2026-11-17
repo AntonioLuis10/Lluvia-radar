@@ -5,6 +5,7 @@ Salida: probabilidad (0-100 %) de superar cada umbral de intensidad, por plazo y
 import logging
 
 import numpy as np
+from scipy.ndimage import shift as _shift
 
 log = logging.getLogger("nowcast")
 
@@ -46,8 +47,34 @@ def estimate_motion(db_stack):
     return np.zeros((2,) + db_stack.shape[1:], np.float32), False
 
 
+def blend_displacement(lead_min, tau0):
+    """Desplazamiento extra (en minutos de viento) al pasar de radar puro a la mezcla
+    V(t) = w*Vradar + (1-w)*Vviento con w = exp(-t/tau0): integral de (1-w) = t - tau0*(1-exp(-t/tau0))."""
+    return lead_min - tau0 * (1.0 - np.exp(-lead_min / tau0))
+
+
+def blend_probs(probs, V_radar_px, V_wind_px, step_min, leads, tau0):
+    """Traslada cada campo de probabilidad la diferencia entre mezcla y radar puro.
+    V_*: (vx, vy) px/paso. Las celdas sin cobertura (255) se conservan."""
+    out = probs.copy()
+    dv = (np.asarray(V_wind_px) - np.asarray(V_radar_px)) / float(step_min)  # px/min
+    for k, lead in enumerate(leads):
+        d = blend_displacement(lead, tau0)
+        dx, dy = dv[0] * d, dv[1] * d
+        if abs(dx) < 0.05 and abs(dy) < 0.05:
+            continue
+        for i in range(probs.shape[1]):
+            f = probs[k, i]
+            nocov = f == 255
+            g = _shift(np.where(nocov, 0, f).astype(np.float32), (dy, dx), order=1, mode="constant", cval=0.0)
+            g = np.round(g).astype(np.uint8)
+            g[nocov] = 255
+            out[k, i] = g
+    return out
+
+
 def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=120,
-                           n_members=20, seed=42, num_workers=2, ambient_fn=None):
+                           n_members=20, seed=42, num_workers=2, ambient_fn=None, steering_fn=None, tau0=60.0):
     """rate_stack: (T, H, W) mm/h (nan fuera de cobertura), el último es el más reciente.
 
     Devuelve dict con probs (L, nThr, H, W) uint8 (255 = sin cobertura), leads_min, mode, motion_ok.
@@ -80,6 +107,24 @@ def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=1
             out["motion"] = "viento"
         except Exception as e:
             log.warning("Sin viento ambiente de respaldo: %s", e)
+
+    steer_px = None
+    if steering_fn is not None:
+        try:
+            st = steering_fn()
+            strong = np.nanmax(last) >= dbz_to_rate(np.float32(40.0))
+            u, v_n = (st["bunkers"] if (strong and st.get("bunkers")) else st["mean"])
+            pxs = 60.0 * timestep_min / (km_per_pixel * 1000.0)
+            steer_px = (u * pxs, -v_n * pxs)
+            out["steering"] = {"u": round(float(u), 1), "v": round(float(v_n), 1),
+                               "bunkers": bool(strong and st.get("bunkers")),
+                               "shear": st.get("shear")}
+        except Exception as e:
+            log.warning("Sin viento director: %s", e)
+    if not ok and steer_px is not None and out["motion"] == "ninguno":
+        V = np.zeros((2,) + db.shape[1:], np.float32)
+        V[0], V[1] = steer_px
+        out["motion"] = "viento"
 
     counts = np.zeros((n_leads, len(THRESHOLDS), h, w), np.float32)
     state = {"k": 0}
@@ -128,4 +173,12 @@ def forecast_probabilities(rate_stack, timestep_min, km_per_pixel, horizon_min=1
     probs = np.round(np.clip(counts, 0, 1) * 100).astype(np.uint8)
     probs[:, :, ~coverage] = 255
     out["probs"] = probs
+    out["probs_blend"] = None
+    if steer_px is not None and out["motion"] == "radar":
+        wetm = last >= RAIN_MIN
+        wetm = wetm & np.isfinite(last)
+        if wetm.sum() >= 25:
+            Vr = (float(np.median(V[0][wetm])), float(np.median(V[1][wetm])))
+            out["probs_blend"] = blend_probs(probs, Vr, steer_px, timestep_min, leads, tau0)
+            out["tau0"] = tau0
     return out
